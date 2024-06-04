@@ -366,7 +366,9 @@ impl Command {
             callback(i32::from(pid) as u32).map_err(Error::BeforeUnfreeze)?;
         }
 
-        result(Err::PipeError, wakeup.write_all(b"x"))?;
+        result(Err::PipeError, wakeup.write_all(b"x").inspect_err(|e| {
+            println!("Error: {:?}", e);
+        }))?;
         let mut err = [0u8; 6];
         match result(Err::PipeError, errpipe.read(&mut err))? {
             0 => {} // Process successfully execve'd or dead
