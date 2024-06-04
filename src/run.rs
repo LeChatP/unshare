@@ -243,10 +243,6 @@ impl Command {
             result( Err::Fork,
             clone(
                 Box::new(|| -> isize {
-                    // Note: mo memory allocations/deallocations here
-                    println!("wakeup: {:?}", wakeup);
-                    close(wakeup.take().unwrap().into_fd());
-                    println!("wakeup: {:?}", wakeup);
                     let child_info = ChildInfo {
                         filename: self.filename.as_ptr(),
                         args: args_slice,
