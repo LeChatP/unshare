@@ -2,6 +2,7 @@ use std::mem;
 use std::os::unix::io::RawFd;
 use std::ptr;
 
+use capctl::{Cap, CapSet, CapState};
 use nix::errno::Errno;
 use nix::libc::{c_ulong, c_void, sigset_t, size_t};
 use nix::libc::{kill, signal};
@@ -11,6 +12,49 @@ use nix;
 
 use crate::error::ErrorCode as Err;
 use crate::run::{ChildInfo, MAX_PID_LEN};
+
+const CAPABILITIES_ERROR: &str =
+    "You need at least setpcap, sys_admin, bpf, sys_resource, sys_ptrace capabilities to run capable";
+fn cap_effective_error(caplist: &str) -> String {
+    format!(
+        "Unable to toggle {} privilege. {}",
+        caplist, CAPABILITIES_ERROR
+    )
+}
+
+fn cap_effective(cap: Cap, enable: bool) -> Result<(), capctl::Error> {
+    let mut current = CapState::get_current()?;
+    current.effective.set_state(cap, enable);
+    current.set_current()
+}
+
+fn setpcap_effective(enable: bool) -> Result<(), capctl::Error> {
+    cap_effective(Cap::SETPCAP, enable)
+}
+
+fn set_capabilities(caps: CapSet, requires_bounding: bool) {
+    //set capabilities
+    // case where capabilities are more than bounding set
+    let bounding = capctl::bounding::probe();
+    if bounding & caps != caps {
+        panic!("Unable to setup the execution environment: There are more capabilities in this task than the current bounding set! You may are in a container or already in a RootAsRole session.");
+    }
+    setpcap_effective(true).unwrap_or_else(|_| panic!("{}", cap_effective_error("setpcap")));
+    let mut capstate = CapState::empty();
+    if requires_bounding {
+        for cap in (!caps).iter() {
+            capctl::bounding::drop(cap).expect("Failed to set bounding cap");
+        }
+    }
+    capstate.permitted = caps;
+    capstate.inheritable = caps;
+    capstate.set_current().expect("Failed to set current cap");
+    for cap in caps.iter() {
+        capctl::ambient::raise(cap).expect("Failed to set ambiant cap");
+    }
+    setpcap_effective(false).unwrap_or_else(|_| panic!("{}", cap_effective_error("setpcap")));
+    
+}
 
 // And at this point we've reached a special time in the life of the
 // child. The child must now be considered hamstrung and unable to
@@ -141,33 +185,6 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
         }
     });
 
-    child.keep_caps.as_ref().map(|caps| {
-        let header = ffi::CapsHeader {
-            version: ffi::CAPS_V3,
-            pid: 0,
-        };
-        let data = ffi::CapsData {
-            effective_s0: caps[0],
-            permitted_s0: caps[0],
-            inheritable_s0: caps[0],
-            effective_s1: caps[1],
-            permitted_s1: caps[1],
-            inheritable_s1: caps[1],
-        };
-        if nix::libc::syscall(nix::libc::SYS_capset, &header, &data) != 0 {
-            fail(Err::CapSet, epipe);
-        }
-        for idx in 0..caps.len() * 32 {
-            if caps[(idx >> 5) as usize] & (1 << (idx & 31)) != 0 {
-                let rc = nix::libc::prctl(nix::libc::PR_CAP_AMBIENT, nix::libc::PR_CAP_AMBIENT_RAISE, idx, 0, 0);
-                if rc != 0 && Errno::last_raw() == nix::libc::ENOTSUP {
-                    // no need to iterate if ambient caps are notsupported
-                    break;
-                }
-            }
-        }
-    });
-
     child.cfg.work_dir.as_ref().map(|dir| {
         if nix::libc::chdir(dir.as_ptr()) != 0 {
             fail(Err::Chdir, epipe);
@@ -206,6 +223,9 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
             signal(sig, SIG_DFL);
         }
     }
+
+    set_capabilities(child.keep_caps.unwrap_or(CapSet::empty()), false);
+
     nix::libc::execve(
         child.filename,
         child.args.as_ptr(),
@@ -258,23 +278,6 @@ mod ffi {
     use nix::libc::{c_char, c_int};
 
     pub const PR_SET_PDEATHSIG: c_int = 1;
-    pub const CAPS_V3: u32 = 0x20080522;
-
-    #[repr(C)]
-    pub struct CapsHeader {
-        pub version: u32,
-        pub pid: i32,
-    }
-
-    #[repr(C)]
-    pub struct CapsData {
-        pub effective_s0: u32,
-        pub permitted_s0: u32,
-        pub inheritable_s0: u32,
-        pub effective_s1: u32,
-        pub permitted_s1: u32,
-        pub inheritable_s1: u32,
-    }
 
     extern "C" {
         pub fn pivot_root(new_root: *const c_char, put_old: *const c_char) -> c_int;

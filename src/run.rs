@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::File;
@@ -8,6 +9,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
+use capctl::CapSet;
 use nix::libc::{c_char, close};
 use nix;
 use nix::fcntl::OFlag;
@@ -47,7 +49,7 @@ pub struct ChildInfo<'a> {
     pub close_fds: &'a [(RawFd, RawFd)],
     pub setns_namespaces: &'a [(CloneFlags, RawFd)],
     pub pid_env_vars: &'a [(usize, usize)],
-    pub keep_caps: &'a Option<[u32; 2]>,
+    pub keep_caps: &'a Option<CapSet>,
 }
 
 fn raw_with_null(arr: &Vec<CString>) -> Vec<*const c_char> {
@@ -220,7 +222,7 @@ impl Command {
             workdir: PathBuf::from("/").to_cstring(),
         });
 
-        let mut nstack = [0u8; 4096 * 4];
+        let mut nstack = [0u8; 4096];
         let mut wakeup = Some(wakeup);
         let mut wakeup_rd = Some(wakeup_rd);
         let mut errpipe_wr = Some(errpipe_wr);
@@ -237,8 +239,7 @@ impl Command {
             .iter()
             .map(|(ns, fd)| (to_clone_flag(*ns), fd.as_raw_fd()))
             .collect::<Vec<_>>();
-        let pid = result(
-            Err::Fork,
+        let pid = 
             clone(
                 Box::new(|| -> isize {
                     // Note: mo memory allocations/deallocations here
@@ -264,8 +265,7 @@ impl Command {
                 &mut nstack[..],
                 self.config.namespaces,
                 Some(SIGCHLD as i32),
-            ),
-        )?;
+            ).map_err(|e| Error::Fork(e as i32))?;
         drop(wakeup_rd);
         drop(errpipe_wr); // close pipe so we don't wait for ourself
 

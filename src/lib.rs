@@ -59,6 +59,7 @@ pub use crate::status::ExitStatus;
 pub use crate::stdio::{Fd, Stdio};
 pub use crate::zombies::{child_events, reap_zombies, ChildEvent};
 pub use capctl::Cap;
+use capctl::CapSet;
 pub use nix::sys::signal::Signal;
 
 use std::collections::{HashMap, HashSet};
@@ -85,7 +86,7 @@ pub struct Command {
     pivot_root: Option<(PathBuf, PathBuf, bool)>,
     id_map_commands: Option<(PathBuf, PathBuf)>,
     pid_env_vars: HashSet<OsString>,
-    keep_caps: Option<[u32; 2]>,
+    keep_caps: Option<CapSet>,
     before_unfreeze: Option<Box<dyn FnMut(u32) -> Result<(), BoxError>>>,
     pre_exec: Option<Box<dyn Fn() -> Result<(), io::Error>>>,
 }

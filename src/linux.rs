@@ -10,7 +10,7 @@ use crate::idmap::{GidMap, UidMap};
 use crate::namespace::to_clone_flag;
 use crate::stdio::dup_file_cloexec;
 use crate::{Command, Namespace};
-use capctl::Cap;
+use capctl::CapSet;
 
 impl Command {
     /// Allow child process to daemonize. By default we run equivalent of
@@ -282,13 +282,8 @@ impl Command {
     /// granted by this method.
     ///
     /// This method replaces whole Cap mask on each invocation
-    pub fn keep_caps<'x>(&mut self, caps: impl IntoIterator<Item = Cap>) -> &mut Command{
-        let mut buf = [0u32; 2];
-        for item in caps {
-            let item = item as u32;
-            buf[(item >> 5) as usize] |= 1 << (item & 31);
-        }
-        self.keep_caps = Some(buf);
+    pub fn keep_caps<'x>(&mut self, caps: CapSet) -> &mut Command{
+        self.keep_caps = Some(caps);
         self
     }
 }
