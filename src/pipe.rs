@@ -32,6 +32,7 @@ pub enum PipeHolder {
 impl Pipe {
     pub fn new() -> Result<Pipe, Error> {
         let (rd, wr) = result(CreatePipe, pipe2(OFlag::O_CLOEXEC))?;
+        println!("rd: {:?}, wr: {:?}", rd, wr);
         Ok(Pipe(rd.as_raw_fd(), wr.as_raw_fd()))
     }
     pub fn split(self) -> (PipeReader, PipeWriter) {
