@@ -243,6 +243,8 @@ impl Command {
             result( Err::Fork,
             clone(
                 Box::new(|| -> isize {
+                    // Note: mo memory allocations/deallocations here
+                    close(wakeup.take().unwrap().into_fd());
                     let child_info = ChildInfo {
                         filename: self.filename.as_ptr(),
                         args: args_slice,
@@ -310,7 +312,7 @@ impl Command {
         if self.config.make_group_leader {
             result(Err::SetPGid, setpgid(pid, pid))?;
         }
-
+        println!("wakeup pipe: {:?}", wakeup);
         if let Some(&(ref uids, ref gids)) = self.config.id_maps.as_ref() {
             if let Some(&(ref ucmd, ref gcmd)) = self.id_map_commands.as_ref() {
                 let mut cmd = Command::new(ucmd);
