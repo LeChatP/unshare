@@ -282,10 +282,10 @@ impl Command {
     /// granted by this method.
     ///
     /// This method replaces whole Cap mask on each invocation
-    pub fn keep_caps<'x>(&mut self, caps: impl IntoIterator<Item = &'x Cap>) -> &mut Command{
+    pub fn keep_caps<'x>(&mut self, caps: impl IntoIterator<Item = Cap>) -> &mut Command{
         let mut buf = [0u32; 2];
         for item in caps {
-            let item = *item as u32;
+            let item = item as u32;
             buf[(item >> 5) as usize] |= 1 << (item & 31);
         }
         self.keep_caps = Some(buf);
