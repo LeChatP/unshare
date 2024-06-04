@@ -2,12 +2,12 @@ use std::mem;
 use std::os::unix::io::RawFd;
 use std::ptr;
 
-use nix;
-use nix::libc;
+use nix::errno::Errno;
 use nix::libc::{c_ulong, c_void, sigset_t, size_t};
 use nix::libc::{kill, signal};
 use nix::libc::{FD_CLOEXEC, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, MNT_DETACH};
 use nix::libc::{SIG_DFL, SIG_SETMASK};
+use nix;
 
 use crate::error::ErrorCode as Err;
 use crate::run::{ChildInfo, MAX_PID_LEN};
@@ -28,7 +28,7 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
     let mut epipe = child.error_pipe;
 
     child.cfg.death_sig.as_ref().map(|&sig| {
-        if libc::prctl(ffi::PR_SET_PDEATHSIG, sig as c_ulong, 0, 0, 0) != 0 {
+        if nix::libc::prctl(ffi::PR_SET_PDEATHSIG, sig as c_ulong, 0, 0, 0) != 0 {
             fail(Err::ParentDeathSignal, epipe);
         }
     });
@@ -39,13 +39,13 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
     let mut wbuf = [0u8];
     loop {
         // TODO(tailhook) put some timeout on this pipe?
-        let rc = libc::read(child.wakeup_pipe, (&mut wbuf).as_ptr() as *mut c_void, 1);
+        let rc = nix::libc::read(child.wakeup_pipe, (&mut wbuf).as_ptr() as *mut c_void, 1);
         if rc == 0 {
             // Parent already dead presumably before we had a chance to
             // set PDEATHSIG, so just send signal ourself in that case
             if let Some(sig) = child.cfg.death_sig {
-                kill(libc::getpid(), sig as i32);
-                libc::_exit(127);
+                kill(nix::libc::getpid(), sig as i32);
+                nix::libc::_exit(127);
             } else {
                 // In case we wanted to daemonize, just continue
                 //
@@ -55,8 +55,8 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
                 break;
             }
         } else if rc < 0 {
-            let errno = nix::errno::errno();
-            if errno == libc::EINTR as i32 || errno == libc::EAGAIN as i32 {
+            let errno = Errno::last_raw();
+            if errno == nix::libc::EINTR as i32 || errno == nix::libc::EAGAIN as i32 {
                 continue;
             } else {
                 fail(Err::PipeError, errno);
@@ -69,7 +69,7 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
 
     // Move error pipe file descriptors in case they clobber stdio
     while epipe < 3 {
-        let nerr = libc::fcntl(epipe, F_DUPFD_CLOEXEC, 3);
+        let nerr = nix::libc::fcntl(epipe, F_DUPFD_CLOEXEC, 3);
         if nerr < 0 {
             fail(Err::CreatePipe, epipe);
         }
@@ -77,19 +77,19 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
     }
 
     for &(nstype, fd) in child.setns_namespaces {
-        if libc::setns(fd, nstype.bits()) != 0 {
+        if nix::libc::setns(fd, nstype.bits()) != 0 {
             fail(Err::SetNs, epipe);
         }
     }
 
     if !child.pid_env_vars.is_empty() {
         let mut buf = [0u8; MAX_PID_LEN + 1];
-        let data = format_pid_fixed(&mut buf, libc::getpid());
+        let data = format_pid_fixed(&mut buf, nix::libc::getpid());
         for &(index, offset) in child.pid_env_vars {
             // we know that there are at least MAX_PID_LEN+1 bytes in buffer
             child.environ[index]
                 .offset(offset as isize)
-                .copy_from(data.as_ptr() as *const libc::c_char, data.len());
+                .copy_from(data.as_ptr() as *const nix::libc::c_char, data.len());
         }
     }
 
@@ -97,46 +97,46 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
         if ffi::pivot_root(piv.new_root.as_ptr(), piv.put_old.as_ptr()) != 0 {
             fail(Err::ChangeRoot, epipe);
         }
-        if libc::chdir(piv.workdir.as_ptr()) != 0 {
+        if nix::libc::chdir(piv.workdir.as_ptr()) != 0 {
             fail(Err::ChangeRoot, epipe);
         }
         if piv.unmount_old_root {
-            if libc::umount2(piv.old_inside.as_ptr(), MNT_DETACH) != 0 {
+            if nix::libc::umount2(piv.old_inside.as_ptr(), MNT_DETACH) != 0 {
                 fail(Err::ChangeRoot, epipe);
             }
         }
     });
 
     child.chroot.as_ref().map(|chroot| {
-        if libc::chroot(chroot.root.as_ptr()) != 0 {
+        if nix::libc::chroot(chroot.root.as_ptr()) != 0 {
             fail(Err::ChangeRoot, epipe);
         }
-        if libc::chdir(chroot.workdir.as_ptr()) != 0 {
+        if nix::libc::chdir(chroot.workdir.as_ptr()) != 0 {
             fail(Err::ChangeRoot, epipe);
         }
     });
 
     child.keep_caps.as_ref().map(|_| {
         // Don't use securebits because on older systems it doesn't work
-        if libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0 {
+        if nix::libc::prctl(nix::libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0 {
             fail(Err::CapSet, epipe);
         }
     });
 
     child.cfg.gid.as_ref().map(|&gid| {
-        if libc::setgid(gid) != 0 {
+        if nix::libc::setgid(gid) != 0 {
             fail(Err::SetUser, epipe);
         }
     });
 
     child.cfg.supplementary_gids.as_ref().map(|groups| {
-        if libc::setgroups(groups.len() as size_t, groups.as_ptr()) != 0 {
+        if nix::libc::setgroups(groups.len() as size_t, groups.as_ptr()) != 0 {
             fail(Err::SetUser, epipe);
         }
     });
 
     child.cfg.uid.as_ref().map(|&uid| {
-        if libc::setuid(uid) != 0 {
+        if nix::libc::setuid(uid) != 0 {
             fail(Err::SetUser, epipe);
         }
     });
@@ -154,13 +154,13 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
             permitted_s1: caps[1],
             inheritable_s1: caps[1],
         };
-        if libc::syscall(libc::SYS_capset, &header, &data) != 0 {
+        if nix::libc::syscall(nix::libc::SYS_capset, &header, &data) != 0 {
             fail(Err::CapSet, epipe);
         }
         for idx in 0..caps.len() * 32 {
             if caps[(idx >> 5) as usize] & (1 << (idx & 31)) != 0 {
-                let rc = libc::prctl(libc::PR_CAP_AMBIENT, libc::PR_CAP_AMBIENT_RAISE, idx, 0, 0);
-                if rc != 0 && nix::errno::errno() == libc::ENOTSUP {
+                let rc = nix::libc::prctl(nix::libc::PR_CAP_AMBIENT, nix::libc::PR_CAP_AMBIENT_RAISE, idx, 0, 0);
+                if rc != 0 && Errno::last_raw() == nix::libc::ENOTSUP {
                     // no need to iterate if ambient caps are notsupported
                     break;
                 }
@@ -169,19 +169,19 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
     });
 
     child.cfg.work_dir.as_ref().map(|dir| {
-        if libc::chdir(dir.as_ptr()) != 0 {
+        if nix::libc::chdir(dir.as_ptr()) != 0 {
             fail(Err::Chdir, epipe);
         }
     });
 
     for &(dest_fd, src_fd) in child.fds {
         if src_fd == dest_fd {
-            let flags = libc::fcntl(src_fd, F_GETFD);
-            if flags < 0 || libc::fcntl(src_fd, F_SETFD, flags & !FD_CLOEXEC) < 0 {
+            let flags = nix::libc::fcntl(src_fd, F_GETFD);
+            if flags < 0 || nix::libc::fcntl(src_fd, F_SETFD, flags & !FD_CLOEXEC) < 0 {
                 fail(Err::StdioError, epipe);
             }
         } else {
-            if libc::dup2(src_fd, dest_fd) < 0 {
+            if nix::libc::dup2(src_fd, dest_fd) < 0 {
                 fail(Err::StdioError, epipe);
             }
         }
@@ -192,7 +192,7 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
             for fd in start..end {
                 if child.fds.iter().find(|&&(cfd, _)| cfd == fd).is_none() {
                     // Close may fail with ebadf, and it's okay
-                    libc::close(fd);
+                    nix::libc::close(fd);
                 }
             }
         }
@@ -200,30 +200,23 @@ pub unsafe fn child_after_clone(child: &ChildInfo) -> ! {
 
     if child.cfg.restore_sigmask {
         let mut sigmask: sigset_t = mem::zeroed();
-        libc::sigemptyset(&mut sigmask);
-        libc::pthread_sigmask(SIG_SETMASK, &sigmask, ptr::null_mut());
+        nix::libc::sigemptyset(&mut sigmask);
+        nix::libc::pthread_sigmask(SIG_SETMASK, &sigmask, ptr::null_mut());
         for sig in 1..32 {
             signal(sig, SIG_DFL);
         }
     }
-
-    if let Some(callback) = child.pre_exec {
-        if let Err(e) = callback() {
-            fail_errno(Err::PreExec, e.raw_os_error().unwrap_or(10873289), epipe);
-        }
-    }
-
-    libc::execve(
+    nix::libc::execve(
         child.filename,
         child.args.as_ptr(),
         // cancelling mutability, it should be fine
-        child.environ.as_ptr() as *const *const libc::c_char,
+        child.environ.as_ptr() as *const *const nix::libc::c_char,
     );
     fail(Err::Exec, epipe);
 }
 
 unsafe fn fail(code: Err, output: RawFd) -> ! {
-    fail_errno(code, nix::errno::errno(), output)
+    fail_errno(code, Errno::last_raw(), output)
 }
 unsafe fn fail_errno(code: Err, errno: i32, output: RawFd) -> ! {
     let bytes = [
@@ -237,11 +230,11 @@ unsafe fn fail_errno(code: Err, errno: i32, output: RawFd) -> ! {
     ];
     // Writes less than PIPE_BUF should be atomic. It's also unclear what
     // to do if error happened anyway
-    libc::write(output, bytes.as_ptr() as *const c_void, 5);
-    libc::_exit(127);
+    nix::libc::write(output, bytes.as_ptr() as *const c_void, 5);
+    nix::libc::_exit(127);
 }
 
-fn format_pid_fixed<'a>(buf: &'a mut [u8], pid: libc::pid_t) -> &'a [u8] {
+fn format_pid_fixed<'a>(buf: &'a mut [u8], pid: nix::libc::pid_t) -> &'a [u8] {
     buf[buf.len() - 1] = 0;
     if pid == 0 {
         buf[buf.len() - 2] = b'0';

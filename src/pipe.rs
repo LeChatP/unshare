@@ -1,5 +1,6 @@
 use std::io;
 use std::mem;
+use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
 
 use nix::fcntl::OFlag;
@@ -31,7 +32,7 @@ pub enum PipeHolder {
 impl Pipe {
     pub fn new() -> Result<Pipe, Error> {
         let (rd, wr) = result(CreatePipe, pipe2(OFlag::O_CLOEXEC))?;
-        Ok(Pipe(rd, wr))
+        Ok(Pipe(rd.as_raw_fd(), wr.as_raw_fd()))
     }
     pub fn split(self) -> (PipeReader, PipeWriter) {
         let Pipe(rd, wr) = self;

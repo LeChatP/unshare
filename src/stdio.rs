@@ -3,7 +3,6 @@ use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
 
 use nix;
 use nix::fcntl::{fcntl, FcntlArg};
-use nix::libc;
 
 /// An enumeration that is used to configure stdio file descritors
 ///
@@ -47,16 +46,8 @@ pub struct Closing(RawFd);
 pub fn dup_file_cloexec<F: AsRawFd>(file: &F) -> io::Result<Closing> {
     match fcntl(file.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(3)) {
         Ok(fd) => Ok(Closing::new(fd)),
-        Err(nix::Error::Sys(errno)) => {
+        Err(errno) => {
             return Err(io::Error::from_raw_os_error(errno as i32));
-        }
-        Err(nix::Error::InvalidPath) => unreachable!(),
-        Err(nix::Error::InvalidUtf8) => unreachable!(),
-        Err(nix::Error::UnsupportedOperation) => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "nix error: unsupported operation",
-            ));
         }
     }
 }
@@ -149,7 +140,7 @@ impl AsRawFd for Closing {
 impl Drop for Closing {
     fn drop(&mut self) {
         unsafe {
-            libc::close(self.0);
+            nix::libc::close(self.0);
         }
     }
 }

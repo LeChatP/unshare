@@ -14,7 +14,7 @@ authors = ["paul@colomiets.name"]
 edition = "2018"
 
 [dependencies]
-nix = { version = "0.29.0", features = ["signal", "sched", "unistd"] }
+nix = { version = "0.29.0", features = ["signal", "sched", "fs"] }
 capctl = "0.2.4"
 
 [dev-dependencies]

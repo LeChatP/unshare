@@ -2,7 +2,7 @@ use std::mem::zeroed;
 use std::ops::{Range, RangeFrom, RangeFull, RangeTo};
 use std::os::unix::io::RawFd;
 
-use nix::errno::errno;
+use nix::errno::Errno;
 use nix::libc::getrlimit;
 use nix::libc::RLIMIT_NOFILE;
 
@@ -82,7 +82,7 @@ impl Command {
                 let mut rlim = zeroed();
                 let rc = getrlimit(RLIMIT_NOFILE, &mut rlim);
                 if rc < 0 {
-                    panic!("Can't get rlimit: errno {}", errno());
+                    panic!("Can't get rlimit: errno {}", Errno::last_raw());
                 }
                 (x, rlim.rlim_cur as RawFd)
             },

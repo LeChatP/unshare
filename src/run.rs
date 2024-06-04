@@ -1,19 +1,17 @@
 use std::collections::HashMap;
-use std::env::current_dir;
 use std::ffi::CString;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::iter::repeat;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
+use nix::libc::{c_char, close};
 use nix;
-use nix::errno::Errno::EINTR;
 use nix::fcntl::OFlag;
 use nix::fcntl::{fcntl, open, FcntlArg};
-use nix::libc::{c_char, close};
 use nix::sched::{clone, CloneFlags};
 use nix::sys::signal::{kill, SIGCHLD, SIGKILL};
 use nix::sys::stat::Mode;
@@ -37,7 +35,7 @@ pub struct ChildInfo<'a> {
     pub filename: *const c_char,
     pub args: &'a [*const c_char],
     // this is mut because we write pid to environ
-    pub environ: &'a [*mut c_char],
+    pub environ: &'a [*mut std::os::raw::c_char],
     pub cfg: &'a Config,
     pub chroot: &'a Option<Chroot>,
     pub pivot: &'a Option<Pivot>,
@@ -50,7 +48,6 @@ pub struct ChildInfo<'a> {
     pub setns_namespaces: &'a [(CloneFlags, RawFd)],
     pub pid_env_vars: &'a [(usize, usize)],
     pub keep_caps: &'a Option<[u32; 2]>,
-    pub pre_exec: &'a Option<Box<dyn Fn() -> Result<(), io::Error>>>,
 }
 
 fn raw_with_null(arr: &Vec<CString>) -> Vec<*const c_char> {
@@ -214,31 +211,16 @@ impl Command {
                 new_root: new.to_cstring(),
                 put_old: old.to_cstring(),
                 old_inside: relative_to(old, new, true).unwrap().to_cstring(),
-                workdir: current_dir()
-                    .ok()
-                    .and_then(|cur| relative_to(cur, new, true))
-                    .unwrap_or(PathBuf::from("/"))
-                    .to_cstring(),
+                workdir: PathBuf::from("/").to_cstring(),
                 unmount_old_root: unmnt,
             });
 
-        let chroot = self.chroot_dir.as_ref().map(|dir| {
-            let wrk_rel = if let Some((ref piv, _, _)) = self.pivot_root {
-                piv.join(relative_to(dir, "/", false).unwrap())
-            } else {
-                dir.to_path_buf()
-            };
-            Chroot {
-                root: dir.to_cstring(),
-                workdir: current_dir()
-                    .ok()
-                    .and_then(|cur| relative_to(cur, wrk_rel, true))
-                    .unwrap_or(PathBuf::from("/"))
-                    .to_cstring(),
-            }
+        let chroot = self.chroot_dir.as_ref().map(|dir| Chroot {
+            root: dir.to_cstring(),
+            workdir: PathBuf::from("/").to_cstring(),
         });
 
-        let mut nstack = [0u8; 1024*1024*8]; // 8M stack is the default Linux stack size
+        let mut nstack = [0u8; 4096 * 4];
         let mut wakeup = Some(wakeup);
         let mut wakeup_rd = Some(wakeup_rd);
         let mut errpipe_wr = Some(errpipe_wr);
@@ -276,7 +258,6 @@ impl Command {
                         setns_namespaces: &setns_ns,
                         pid_env_vars: &pid_env_vars,
                         keep_caps: &self.keep_caps,
-                        pre_exec: &self.pre_exec,
                     };
                     child::child_after_clone(&child_info);
                 }),
@@ -292,7 +273,7 @@ impl Command {
             kill(pid, SIGKILL).ok();
             loop {
                 match waitpid(pid, None) {
-                    Err(nix::Error::Sys(EINTR)) => continue,
+                    Err(nix::Error::EINTR) => continue,
                     _ => break,
                 }
             }
