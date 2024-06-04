@@ -240,6 +240,7 @@ impl Command {
             .map(|(ns, fd)| (to_clone_flag(*ns), fd.as_raw_fd()))
             .collect::<Vec<_>>();
         let pid = 
+            result( Err::Fork,
             clone(
                 Box::new(|| -> isize {
                     // Note: mo memory allocations/deallocations here
@@ -265,7 +266,9 @@ impl Command {
                 &mut nstack[..],
                 self.config.namespaces,
                 Some(SIGCHLD as i32),
-            ).map_err(|e| Error::Fork(e as i32))?;
+            ).inspect_err(|e| {
+                println!("Error: {:?}", e);
+            }))?;
         drop(wakeup_rd);
         drop(errpipe_wr); // close pipe so we don't wait for ourself
 
